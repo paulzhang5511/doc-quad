@@ -1,0 +1,51 @@
+[package]
+name = "doc-quad"
+version = "0.1.0"
+edition = "2021"
+description = "A high-performance document detection library in pure Rust."
+authors = ["Paul Zhang"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/paulzhang5511/doc-quad"
+repository = "https://github.com/paulzhang5511/doc-quad"
+documentation = "https://docs.rs/doc-quad"
+
+categories = ["graphics", "imaging", "mathematics"]
+keywords = ["document", "detection", "edge-detection", "quadrilateral", "computer-vision"]
+readme = "README.md"
+
+[dependencies]
+# 内存映射与零拷贝转换
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# 多维数组管理与 Stride 处理
+ndarray = "0.15"
+
+# 边缘检测核心算子
+fast-canny = "0.1"
+
+# SIMD 加速的线性代数运算
+glam = "0.24"
+
+# 几何类型定义与算法 (Douglas-Peucker)
+geo-types = "0.7"
+geo = "0.27"
+
+# 错误处理定义
+thiserror = "1.0"
+
+# 日志抽象接口
+log = "0.4"
+
+[dev-dependencies]
+# 仅用于集成测试与示例
+image = "0.25"
+# P0 修复：补充缺失的测试日志依赖
+env_logger = "0.11"
+
+[[example]]
+name = "pc_demo"
+path = "examples/pc_demo.rs"
+
+[[example]]
+name = "detect_image"
+path = "examples/detect_image.rs"
