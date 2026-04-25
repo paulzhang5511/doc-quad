@@ -9,8 +9,14 @@ homepage = "https://github.com/paulzhang5511/doc-quad"
 repository = "https://github.com/paulzhang5511/doc-quad"
 documentation = "https://docs.rs/doc-quad"
 
-categories = ["graphics", "imaging", "mathematics"]
-keywords = ["document", "detection", "edge-detection", "quadrilateral", "computer-vision"]
+categories = ["graphics"]
+keywords = [
+    "document",
+    "detection",
+    "edge-detection",
+    "quadrilateral",
+    "computer-vision",
+]
 readme = "README.md"
 
 [dependencies]
