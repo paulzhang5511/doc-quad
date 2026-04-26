@@ -2,8 +2,8 @@
 
 纯 Rust 实现的高性能文档检测库。
 
-[![Crates.io](https://img.shields.io/crates/v/doc-quad)](https://crates.io/crates/doc-quad)
-[![License](https://img.shields.io/crates/l/doc-quad)](https://crates.io/crates/doc-quad)
+[![Crates.io](https://img.shields.io/crates/v/doc-quad.svg)](https://crates.io/crates/doc-quad)
+[![Documentation](https://docs.rs/doc-quad/badge.svg)](https://docs.rs/doc-quad/latest/doc-quad)
 
 ## 功能特性
 
@@ -52,7 +52,7 @@ match result {
 
 - `bytemuck` - 零拷贝类型转换
 - `ndarray` - 多维数组处理
-- `fast-canny` - Canny 边缘检测
+- `doc-quad` - Canny 边缘检测
 - `glam` - SIMD 加速的线性代数运算
 - `geo-types` & `geo` - 几何类型与算法
 - `thiserror` - 错误处理

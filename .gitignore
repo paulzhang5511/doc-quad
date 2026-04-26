@@ -1,3 +1,6 @@
 /target
 /1.md
 Cargo.lock
+.DS_Store
+plan.md
+/run

@@ -137,49 +137,55 @@ impl EdgeDetector {
         }
 
         // ── Canny 检测 ────────────────────────────────────────────────────────
-        // 尝试三组阈值，输出各自的边缘密度，辅助判断最佳阈值区间
-        log::info!(
-            "[Edge::Detector] - [DEBUG] Threshold sensitivity scan \
-             (sigma=1.0, 3 trial configs):"
-        );
-        for &(trial_low, trial_high) in &[(2.0f32, 8.0), (5.0, 20.0), (10.0, 40.0)] {
-            if let Ok(cfg) = CannyConfig::builder()
-                .sigma(1.0)
-                .thresholds(trial_low, trial_high)
+
+        // 【重构点】：使用 cfg(debug_assertions) 包裹调试性质的试探循环
+        // 生产环境 Release 下不会编译以下多余的计算逻辑
+        #[cfg(debug_assertions)]
+        {
+            // 尝试三组阈值，输出各自的边缘密度，辅助判断最佳阈值区间
+            log::info!(
+                "[Edge::Detector] - [DEBUG] Threshold sensitivity scan \
+                 (sigma=1.0, 3 trial configs):"
+            );
+            for &(trial_low, trial_high) in &[(2.0f32, 8.0), (5.0, 20.0), (10.0, 40.0)] {
+                if let Ok(cfg) = CannyConfig::builder()
+                    .sigma(1.0)
+                    .thresholds(trial_low, trial_high)
+                    .build()
+                {
+                    // 注意：此处复用 workspace，trial 结果会覆盖，仅用于统计密度
+                    if let Ok(trial_slice) = canny_u8(&input_data, &mut self.workspace, &cfg) {
+                        let trial_count = trial_slice.iter().filter(|&&v| v == 255).count();
+                        let trial_density =
+                            trial_count as f32 / (self.width * self.height) as f32 * 100.0;
+                        log::info!(
+                            "[Edge::Detector] - [DEBUG]   low={:.1}, high={:.1} -> \
+                             edge_pixels={}, density={:.2}%",
+                            trial_low, trial_high, trial_count, trial_density
+                        );
+                    }
+                }
+            }
+
+            // 同时尝试 sigma=0.5 的低平滑版本，观察细边缘保留情况
+            log::info!(
+                "[Edge::Detector] - [DEBUG] Low-sigma scan (sigma=0.5, low=5.0, high=20.0):"
+            );
+            if let Ok(cfg_low_sigma) = CannyConfig::builder()
+                .sigma(0.5)
+                .thresholds(5.0, 20.0)
                 .build()
             {
-                // 注意：此处复用 workspace，trial 结果会覆盖，仅用于统计密度
-                if let Ok(trial_slice) = canny_u8(&input_data, &mut self.workspace, &cfg) {
+                if let Ok(trial_slice) = canny_u8(&input_data, &mut self.workspace, &cfg_low_sigma) {
                     let trial_count = trial_slice.iter().filter(|&&v| v == 255).count();
                     let trial_density =
                         trial_count as f32 / (self.width * self.height) as f32 * 100.0;
                     log::info!(
-                        "[Edge::Detector] - [DEBUG]   low={:.1}, high={:.1} -> \
+                        "[Edge::Detector] - [DEBUG]   sigma=0.5, low=5.0, high=20.0 -> \
                          edge_pixels={}, density={:.2}%",
-                        trial_low, trial_high, trial_count, trial_density
+                        trial_count, trial_density
                     );
                 }
-            }
-        }
-
-        // 同时尝试 sigma=0.5 的低平滑版本，观察细边缘保留情况
-        log::info!(
-            "[Edge::Detector] - [DEBUG] Low-sigma scan (sigma=0.5, low=5.0, high=20.0):"
-        );
-        if let Ok(cfg_low_sigma) = CannyConfig::builder()
-            .sigma(0.5)
-            .thresholds(5.0, 20.0)
-            .build()
-        {
-            if let Ok(trial_slice) = canny_u8(&input_data, &mut self.workspace, &cfg_low_sigma) {
-                let trial_count = trial_slice.iter().filter(|&&v| v == 255).count();
-                let trial_density =
-                    trial_count as f32 / (self.width * self.height) as f32 * 100.0;
-                log::info!(
-                    "[Edge::Detector] - [DEBUG]   sigma=0.5, low=5.0, high=20.0 -> \
-                     edge_pixels={}, density={:.2}%",
-                    trial_count, trial_density
-                );
             }
         }
 
@@ -210,7 +216,8 @@ impl EdgeDetector {
             raw_edge_count, raw_density, self.width, self.height, canny_elapsed
         );
 
-        // 分析边缘像素的空间分布（分 4×4 网格统计密度）
+        // 分析边缘像素的空间分布（分 4×4 网格统计密度）- 这个全图扫描函数也很耗时，故限定 Debug 模式
+        #[cfg(debug_assertions)]
         Self::log_edge_spatial_distribution(&raw_edges, self.width, self.height, "raw_canny");
 
         // 保存 Canny 原始边缘图
@@ -250,6 +257,7 @@ impl EdgeDetector {
         );
 
         // 分析闭运算后边缘的空间分布
+        #[cfg(debug_assertions)]
         Self::log_edge_spatial_distribution(
             &closed_edges,
             self.width,
@@ -257,7 +265,7 @@ impl EdgeDetector {
             "after_close",
         );
 
-        // 保存闭运算后边缘图
+        // 保存闭运算后边缘图以及更多的调试用闭运算组合
         if let Some(dir) = debug_dir {
             Self::save_binary_image(
                 &closed_edges,
@@ -266,60 +274,64 @@ impl EdgeDetector {
                 &dir.join("debug_03_after_close.png"),
             );
 
-            // 额外：用 radius=2 再做一次闭运算，对比效果
-            let closed_r2 = Morphology::close(&raw_edges, self.width, self.height, 2);
-            let r2_count = closed_r2.iter().filter(|&&v| v == 255).count();
-            log::info!(
-                "[Edge::Detector] - [DEBUG] radius=2 close result: \
-                 edge_pixels={}, density={:.2}%",
-                r2_count,
-                r2_count as f32 / (self.width * self.height) as f32 * 100.0
-            );
-            Self::save_binary_image(
-                &closed_r2,
-                self.width,
-                self.height,
-                &dir.join("debug_04_close_radius2.png"),
-            );
-
-            // 额外：用 radius=3 再做一次闭运算
-            let closed_r3 = Morphology::close(&raw_edges, self.width, self.height, 3);
-            let r3_count = closed_r3.iter().filter(|&&v| v == 255).count();
-            log::info!(
-                "[Edge::Detector] - [DEBUG] radius=3 close result: \
-                 edge_pixels={}, density={:.2}%",
-                r3_count,
-                r3_count as f32 / (self.width * self.height) as f32 * 100.0
-            );
-            Self::save_binary_image(
-                &closed_r3,
-                self.width,
-                self.height,
-                &dir.join("debug_05_close_radius3.png"),
-            );
-
-            // 额外：sigma=0.5 + radius=2 组合
-            if let Ok(cfg_s05) = CannyConfig::builder()
-                .sigma(0.5)
-                .thresholds(5.0, 20.0)
-                .build()
+            // 【重构点】：其他试探性的形态学闭运算仅在 debug 模式执行
+            #[cfg(debug_assertions)]
             {
-                if let Ok(s05_slice) = canny_u8(&input_data, &mut self.workspace, &cfg_s05) {
-                    let s05_raw = s05_slice.to_vec();
-                    let s05_closed = Morphology::close(&s05_raw, self.width, self.height, 2);
-                    let s05_count = s05_closed.iter().filter(|&&v| v == 255).count();
-                    log::info!(
-                        "[Edge::Detector] - [DEBUG] sigma=0.5 + radius=2 close: \
-                         edge_pixels={}, density={:.2}%",
-                        s05_count,
-                        s05_count as f32 / (self.width * self.height) as f32 * 100.0
-                    );
-                    Self::save_binary_image(
-                        &s05_closed,
-                        self.width,
-                        self.height,
-                        &dir.join("debug_06_sigma05_close_r2.png"),
-                    );
+                // 额外：用 radius=2 再做一次闭运算，对比效果
+                let closed_r2 = Morphology::close(&raw_edges, self.width, self.height, 2);
+                let r2_count = closed_r2.iter().filter(|&&v| v == 255).count();
+                log::info!(
+                    "[Edge::Detector] - [DEBUG] radius=2 close result: \
+                     edge_pixels={}, density={:.2}%",
+                    r2_count,
+                    r2_count as f32 / (self.width * self.height) as f32 * 100.0
+                );
+                Self::save_binary_image(
+                    &closed_r2,
+                    self.width,
+                    self.height,
+                    &dir.join("debug_04_close_radius2.png"),
+                );
+
+                // 额外：用 radius=3 再做一次闭运算
+                let closed_r3 = Morphology::close(&raw_edges, self.width, self.height, 3);
+                let r3_count = closed_r3.iter().filter(|&&v| v == 255).count();
+                log::info!(
+                    "[Edge::Detector] - [DEBUG] radius=3 close result: \
+                     edge_pixels={}, density={:.2}%",
+                    r3_count,
+                    r3_count as f32 / (self.width * self.height) as f32 * 100.0
+                );
+                Self::save_binary_image(
+                    &closed_r3,
+                    self.width,
+                    self.height,
+                    &dir.join("debug_05_close_radius3.png"),
+                );
+
+                // 额外：sigma=0.5 + radius=2 组合
+                if let Ok(cfg_s05) = CannyConfig::builder()
+                    .sigma(0.5)
+                    .thresholds(5.0, 20.0)
+                    .build()
+                {
+                    if let Ok(s05_slice) = canny_u8(&input_data, &mut self.workspace, &cfg_s05) {
+                        let s05_raw = s05_slice.to_vec();
+                        let s05_closed = Morphology::close(&s05_raw, self.width, self.height, 2);
+                        let s05_count = s05_closed.iter().filter(|&&v| v == 255).count();
+                        log::info!(
+                            "[Edge::Detector] - [DEBUG] sigma=0.5 + radius=2 close: \
+                             edge_pixels={}, density={:.2}%",
+                            s05_count,
+                            s05_count as f32 / (self.width * self.height) as f32 * 100.0
+                        );
+                        Self::save_binary_image(
+                            &s05_closed,
+                            self.width,
+                            self.height,
+                            &dir.join("debug_06_sigma05_close_r2.png"),
+                        );
+                    }
                 }
             }
         }
@@ -471,10 +483,10 @@ impl EdgeDetector {
         Ok(())
     }
 
-fn choose_morph_radius(width: usize, height: usize) -> usize {
-    let long_edge = width.max(height);
-    if long_edge <= 512 { 1 }
-    else if long_edge <= 1024 { 2 }  // 当前固定返回 1，建议改为 2
-    else { 3 }
-}
+    fn choose_morph_radius(width: usize, height: usize) -> usize {
+        let long_edge = width.max(height);
+        if long_edge <= 512 { 1 }
+        else if long_edge <= 1024 { 2 }  // 当前固定返回 1，建议改为 2
+        else { 3 }
+    }
 }

@@ -65,9 +65,12 @@ pub fn find_document(buffer: &DocBuffer<'_>) -> Result<Option<Quadrilateral>, Do
     let (proc_width, proc_height, proc_data) = if scale < 1.0 {
         let w = ((buffer.width as f32 * scale) as u32).max(3);
         let h = ((buffer.height as f32 * scale) as u32).max(3);
-        let data = downsample_nearest(buffer, w, h);
+
+        // 【修复点】：使用双线性插值替代最近邻插值，保护边缘平滑性
+        let data = downsample_bilinear(buffer, w, h);
+
         log::info!(
-            "[Lib::find_document] - Downsampled {}x{} -> {}x{} (scale={:.4})",
+            "[Lib::find_document] - Downsampled {}x{} -> {}x{} (scale={:.4}) using bilinear interp",
             buffer.width,
             buffer.height,
             w,
@@ -316,7 +319,7 @@ pub fn find_document(buffer: &DocBuffer<'_>) -> Result<Option<Quadrilateral>, Do
         );
 
         let Some(simplified) =
-            crate::geom::simplify::GeometrySimplifier::simplify_to_quad(contour)
+                    crate::geom::simplify::GeometrySimplifier::simplify_to_quad(&contour)
         else {
             geom_rejected_simplify += 1;
             log::debug!(
@@ -424,23 +427,52 @@ pub fn find_document(buffer: &DocBuffer<'_>) -> Result<Option<Quadrilateral>, Do
     Ok(result)
 }
 
-/// 最近邻下采样：将带 stride 的原始缓冲区缩放到目标尺寸
-fn downsample_nearest(buffer: &DocBuffer<'_>, target_w: u32, target_h: u32) -> Vec<u8> {
+/// 双线性插值下采样 (Bilinear Interpolation)
+///
+/// 替代原有的最近邻缩放，平滑融合源图像的相邻 4 个像素，
+/// 能够极大缓解因下采样引发的高频锯齿 (Aliasing)，保障 Canny 边缘的连续性。
+fn downsample_bilinear(buffer: &DocBuffer<'_>, target_w: u32, target_h: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((target_w * target_h) as usize);
     let src_w = buffer.width;
     let src_h = buffer.height;
     let stride = buffer.stride as usize;
+    let data = buffer.data;
+
+    // 防止除以 0，确保边界至少有 2 个点可以插值
+    let x_ratio = (src_w.saturating_sub(1)) as f32 / (target_w.max(2) - 1) as f32;
+    let y_ratio = (src_h.saturating_sub(1)) as f32 / (target_h.max(2) - 1) as f32;
 
     for ty in 0..target_h {
-        // 源行索引（中心点映射，减少边界误差）
-        let sy = ((ty as f32 + 0.5) * src_h as f32 / target_h as f32) as usize;
-        let sy = sy.min(src_h as usize - 1);
-        let row_offset = sy * stride;
+        let gy = (ty as f32) * y_ratio;
+        let y_floor = gy.floor() as usize;
+        let y_ceil = (y_floor + 1).min(src_h as usize - 1);
+        let y_weight = gy - y_floor as f32;
+        let y_weight_inv = 1.0 - y_weight;
+
+        let row_floor_offset = y_floor * stride;
+        let row_ceil_offset = y_ceil * stride;
 
         for tx in 0..target_w {
-            let sx = ((tx as f32 + 0.5) * src_w as f32 / target_w as f32) as usize;
-            let sx = sx.min(src_w as usize - 1);
-            out.push(buffer.data[row_offset + sx]);
+            let gx = (tx as f32) * x_ratio;
+            let x_floor = gx.floor() as usize;
+            let x_ceil = (x_floor + 1).min(src_w as usize - 1);
+            let x_weight = gx - x_floor as f32;
+            let x_weight_inv = 1.0 - x_weight;
+
+            // 获取周围的四个像素点 (Top-Left, Top-Right, Bottom-Left, Bottom-Right)
+            let tl = data[row_floor_offset + x_floor] as f32;
+            let tr = data[row_floor_offset + x_ceil] as f32;
+            let bl = data[row_ceil_offset + x_floor] as f32;
+            let br = data[row_ceil_offset + x_ceil] as f32;
+
+            // X 轴线性插值
+            let top = tl * x_weight_inv + tr * x_weight;
+            let bottom = bl * x_weight_inv + br * x_weight;
+
+            // Y 轴线性插值
+            let val = top * y_weight_inv + bottom * y_weight;
+
+            out.push(val.round() as u8);
         }
     }
     out
